@@ -74,7 +74,21 @@ const envSchema = z.object({
   JWT_SECRET: z
     .string()
     .min(32, 'JWT_SECRET must be at least 32 characters. Generate one with: node -e "console.log(require(\'crypto\').randomBytes(48).toString(\'base64url\'))"'),
-  JWT_ACCESS_TTL: z.string().default('15m'),
+  /**
+   * A timespan, checked here because it is passed straight to jsonwebtoken.
+   *
+   * z.string() accepted anything, and jwt.sign() throws on a malformed value —
+   * so a typo did not fail at boot, it threw on every token issued: HTTP 500 on
+   * register, login and refresh, while /health/ready still answered
+   * "database: up" and the deploy looked healthy.
+   */
+  JWT_ACCESS_TTL: z
+    .string()
+    .regex(
+      /^\d+(\.\d+)?\s*(ms|s|m|h|d|w|y)?$/i,
+      'JWT_ACCESS_TTL must be a timespan such as 15m, 2h or 900 (seconds).',
+    )
+    .default('15m'),
   JWT_REFRESH_TTL_DAYS: z.coerce.number().int().min(1).max(365).default(30),
   COOKIE_DOMAIN: z.string().optional().transform((v) => (v ? v : undefined)),
   COOKIE_SECURE: bool(false),
@@ -100,7 +114,34 @@ const envSchema = z.object({
   CALL_RECONNECT_GRACE_MS: z.coerce.number().int().min(500).default(30_000),
 });
 
-const parsed = envSchema.safeParse(process.env);
+/**
+ * Strip one layer of matching surrounding quotes from every value.
+ *
+ * Every .env parser removes the quotes in FOO="bar"; a hosting platform's
+ * variables panel does not. Paste JWT_ACCESS_TTL="15m" out of .env.example into
+ * one and the value is literally five characters, quotes included — so the same
+ * text means two different things depending on where it was pasted. That is not
+ * a mistake anyone can see: it looks correct in the panel, and it surfaced as
+ * HTTP 500 on every login with a healthy-looking deploy.
+ *
+ * Rather than police the file, make both spellings mean the same thing. A value
+ * whose first and last characters are the same quote loses them; anything else
+ * is passed through untouched.
+ */
+function unquote(value: string): string {
+  if (value.length < 2) return value;
+  const first = value[0];
+  const last = value[value.length - 1];
+  if ((first === '"' || first === "'") && last === first) return value.slice(1, -1);
+  return value;
+}
+
+const rawEnv: Record<string, string> = {};
+for (const [key, value] of Object.entries(process.env)) {
+  if (value !== undefined) rawEnv[key] = unquote(value);
+}
+
+const parsed = envSchema.safeParse(rawEnv);
 
 if (!parsed.success) {
   const issues = parsed.error.issues

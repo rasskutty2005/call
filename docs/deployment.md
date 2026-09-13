@@ -32,6 +32,17 @@ production `.env` is safe from it. It does replace a `JWT_SECRET` that is missin
 under 32 characters, or one of the placeholders that appear in this repository —
 a secret published in source control is worse than no secret at all.
 
+Values are **unquoted** before validation. A `.env` file writes `FOO="bar"` and
+every parser strips those quotes, but a hosting panel does not: paste
+`JWT_ACCESS_TTL="15m"` out of `.env.example` into one and the value is five
+characters, quotes included. That produced HTTP 500 on register, login and
+refresh — `jsonwebtoken` throws on a malformed `expiresIn`, and the throw is per
+request, so the process starts fine and `/health/ready` still answers
+`database: up`. `env.ts` now strips one layer of matching quotes from every
+value, so the same text means the same thing in both places, and
+`JWT_ACCESS_TTL` is checked against a timespan at boot rather than at the moment
+someone tries to log in.
+
 The CORS loopback exemption does **not** relax in production — it is
 development-only (`isAllowedOrigin` in `apps/server/src/env.ts`).
 
