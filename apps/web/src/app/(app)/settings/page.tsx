@@ -27,6 +27,7 @@ import { useAuthStore } from '@/store/auth';
 import { useCallStore } from '@/store/call';
 import { AudioPipeline } from '@/voice/AudioPipeline';
 import { VoiceConverterFactory } from '@/voice/VoiceConverterFactory';
+import { NeuralEngineCheck } from '@/features/voice/NeuralEngineCheck';
 import { cn } from '@/lib/utils';
 
 /**
@@ -116,6 +117,8 @@ export default function SettingsPage() {
               </div>
             </div>
           </div>
+
+          <NeuralEngineCheck />
 
           <div>
             <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
