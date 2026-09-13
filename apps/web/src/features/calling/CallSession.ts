@@ -111,6 +111,11 @@ export class CallSession {
    * Opens the microphone and builds the audio graph. Deliberately separate from
    * (and before) `connect()`: permission must be resolved before anyone's phone
    * starts ringing, so a denied microphone never turns into a dropped call.
+   *
+   * Every caller must come through here rather than reaching past it to
+   * `audioPipeline.start()`. They all did, which left this method unreferenced
+   * and made anything added to it dead on arrival — the audio-session claim
+   * below was exactly that, shipped and inert.
    */
   async prepareAudio(options: { deviceId?: string } = {}): Promise<void> {
     // Before getUserMedia, not after: the OS decides where a call comes out

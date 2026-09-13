@@ -308,7 +308,7 @@ export const useCallStore = create<CallStoreState>((set, get) => {
       let temporary: CallSession | null = null;
       try {
         temporary = createSession('pending', 'caller');
-        await temporary.audioPipeline.start();
+        await temporary.prepareAudio();
       } catch (error) {
         await temporary?.close();
         resetToIdle(null);
@@ -334,7 +334,7 @@ export const useCallStore = create<CallStoreState>((set, get) => {
         // pipeline is cheap to recreate and this keeps ids honest.
         await temporary.close();
         session = createSession(call.id, 'caller');
-        await session.audioPipeline.start();
+        await session.prepareAudio();
         applyVoiceSettings();
         session.audioPipeline.setVoiceChangerEnabled(get().voiceChangerEnabled);
 
@@ -379,7 +379,7 @@ export const useCallStore = create<CallStoreState>((set, get) => {
 
       try {
         session = createSession(callId, 'callee');
-        await session.audioPipeline.start();
+        await session.prepareAudio();
         applyVoiceSettings();
       } catch (error) {
         await teardown();
