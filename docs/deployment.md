@@ -122,6 +122,36 @@ accounts, messages and call history.
 - `NEXT_PUBLIC_API_URL` unset means same-origin relative URLs in a production
   build, which is correct here. Set it only when the API is on a different host.
 
+### The public origin is discovered, not configured
+
+Browsers send `Origin` even on same-origin POSTs, so the API's allow-list has to
+contain the public URL or every login is refused. `serve.mjs` reads it from
+whichever variable the platform publishes:
+
+| Variable | Platform | Shape |
+| --- | --- | --- |
+| `PUBLIC_URL` | any | full URL — the manual override |
+| `RENDER_EXTERNAL_URL` | Render | full URL |
+| `RENDER_EXTERNAL_HOSTNAME` | Render | hostname |
+| `RAILWAY_PUBLIC_DOMAIN` | Railway | hostname |
+| `HEROKU_APP_NAME` | Heroku | app name |
+| `FLY_APP_NAME` | Fly.io | app name |
+
+Anything set in `CORS_ORIGINS` is kept; a discovered origin is only ever
+appended, and what was added is logged.
+
+Only Railway's variable was read at first, on the assumption that everywhere else
+could use `PUBLIC_URL`. A Render deploy then logged `CORS_ORIGINS is empty and no
+public origin was discovered`, kept the allow-list at `http://localhost:3000`, and
+answered **HTTP 500** on register, login and refresh while reporting itself live.
+The same signal drives secure cookies, so `COOKIE_SECURE` was off at the same
+time.
+
+A refused origin now returns **403 `CORS_ORIGIN_NOT_ALLOWED`** naming the origin
+and the variable. It used to be a bare `Error`, which the handler turned into
+`500 Something went wrong on our end` — a configuration problem wearing the
+costume of a crash, which is the hardest kind to find.
+
 ### Two proxies, not one
 
 `trust proxy` is a hop count, and single-port hosting adds a hop: the platform

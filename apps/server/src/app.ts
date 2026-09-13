@@ -3,6 +3,7 @@ import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import helmet from 'helmet';
 import { env, hasTurn, isAllowedOrigin, isProd } from './env.js';
+import { AppError } from './lib/errors.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 import { generalLimiter } from './middleware/rate-limit.js';
 import { authRouter } from './modules/auth/routes.js';
@@ -38,7 +39,18 @@ export function createApp(): Express {
         // Same-origin / curl / server-to-server requests have no Origin header.
         if (!origin) return callback(null, true);
         if (isAllowedOrigin(origin)) return callback(null, true);
-        callback(new Error(`Origin ${origin} is not allowed by CORS`));
+        // A plain Error here became HTTP 500 "Something went wrong on our end",
+        // which is how a misconfigured allow-list came to look like a crashing
+        // server: the deploy was fine, the origin simply was not on the list.
+        // Say which origin and which variable, with a status that means "your
+        // request was refused" rather than "we fell over".
+        callback(
+          new AppError(
+            403,
+            'CORS_ORIGIN_NOT_ALLOWED',
+            `Origin ${origin} is not in CORS_ORIGINS. Add it, or set PUBLIC_URL to the address browsers use.`,
+          ),
+        );
       },
       credentials: true,
       methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],

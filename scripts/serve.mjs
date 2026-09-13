@@ -253,19 +253,58 @@ taken.add(WEB_PORT);
  * the platform already provides and log the result. Explicit beats magic, so an
  * origin only ever gets *added*; anything set in CORS_ORIGINS is kept.
  */
+/**
+ * Every platform announces its public address under a different name, and in a
+ * different shape: some a whole URL, some a bare hostname, some only an app name.
+ *
+ * This read Railway's variable and nothing else, assuming anywhere else could use
+ * PUBLIC_URL. That assumption cost a deploy. On Render the log said
+ * "CORS_ORIGINS is empty and no public origin was discovered", the allow-list
+ * stayed at http://localhost:3000, and the browser's real Origin was refused, so
+ * register, login and refresh all answered HTTP 500 while the service reported
+ * itself live. The same signal decides secure cookies, so the refresh cookie lost
+ * its Secure flag at the same moment.
+ *
+ * Add a platform by adding a row. PUBLIC_URL stays first, as the manual override.
+ */
+const PUBLIC_ORIGIN_VARS = [
+  'PUBLIC_URL', // manual override, any host
+  'RENDER_EXTERNAL_URL', // Render, full URL
+  'RENDER_EXTERNAL_HOSTNAME', // Render, hostname only
+  'RAILWAY_PUBLIC_DOMAIN', // Railway, hostname only
+  'HEROKU_APP_NAME', // Heroku, app name only
+  'FLY_APP_NAME', // Fly.io, app name only
+];
+
+/** Hosts that publish an app name rather than an address. */
+const APP_NAME_DOMAINS = { HEROKU_APP_NAME: 'herokuapp.com', FLY_APP_NAME: 'fly.dev' };
+
+function toOrigin(name, rawValue) {
+  let value = rawValue.trim();
+  while (value.endsWith('/')) value = value.slice(0, -1);
+  if (!value) return null;
+  if (value.startsWith('http://') || value.startsWith('https://')) return value;
+  const domain = APP_NAME_DOMAINS[name];
+  return domain ? `https://${value}.${domain}` : `https://${value}`;
+}
+
 function publicOrigins() {
   const found = [];
-  if (process.env.PUBLIC_URL) found.push(process.env.PUBLIC_URL);
-  // Set automatically by Railway; the equivalents elsewhere can go in PUBLIC_URL.
-  if (process.env.RAILWAY_PUBLIC_DOMAIN) found.push(`https://${process.env.RAILWAY_PUBLIC_DOMAIN}`);
-  return found.map((value) => value.replace(/\/$/, ''));
+  for (const name of PUBLIC_ORIGIN_VARS) {
+    const value = process.env[name];
+    if (!value) continue;
+    const origin = toOrigin(name, value);
+    if (origin && !found.includes(origin)) found.push(origin);
+  }
+  return found;
 }
 
 const configuredOrigins = (process.env.CORS_ORIGINS ?? '')
   .split(',')
   .map((value) => value.trim())
   .filter(Boolean);
-const discovered = publicOrigins().filter((origin) => !configuredOrigins.includes(origin));
+const platformOrigins = publicOrigins();
+const discovered = platformOrigins.filter((origin) => !configuredOrigins.includes(origin));
 const corsOrigins = [...configuredOrigins, ...discovered];
 
 if (discovered.length > 0) {
@@ -298,7 +337,10 @@ if (discovered.length > 0) {
  * on plain HTTP locally therefore changes nothing. An explicit COOKIE_SECURE
  * always wins.
  */
-const behindTlsEdge = discovered.length > 0;
+// Every origin the platform announced, not just the ones missing from
+// CORS_ORIGINS: listing the public origin by hand must not quietly switch secure
+// cookies back off. https specifically, since that is the claim being made.
+const behindTlsEdge = platformOrigins.some((origin) => origin.startsWith('https://'));
 const cookieSecure = process.env.COOKIE_SECURE ?? (behindTlsEdge ? 'true' : undefined);
 if (behindTlsEdge && process.env.COOKIE_SECURE === undefined) {
   log('behind a TLS edge: setting COOKIE_SECURE=true');
