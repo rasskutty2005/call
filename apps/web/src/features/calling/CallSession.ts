@@ -53,6 +53,8 @@ export class CallSession {
   /** The callee is "polite": on an offer collision it yields. */
   private readonly polite: boolean;
   private makingOffer = false;
+  /** Whether an offer has actually reached the wire. See the check in connect(). */
+  private offerSent = false;
   private ignoreOffer = false;
   private settingRemoteAnswerPending = false;
   /**
@@ -131,6 +133,42 @@ export class CallSession {
     });
     this.pc = pc;
 
+    /*
+     * Handlers first, before addTrack and before any await.
+     *
+     * addTrack sets the negotiation-needed flag, and the event that follows is
+     * queued as a task. These assignments used to sit after an
+     * `await sender.setParameters(...)`, which hands the event loop back long
+     * enough for that task to run — dispatching negotiationneeded at a
+     * connection with no listener. The event is then simply gone; the flag does
+     * not fire it again.
+     *
+     * Only the caller offers, since the callee starts with negotiation
+     * suppressed. So losing that one event means no offer is ever made, and the
+     * call has no failure path at all: nothing throws, ICE never fails because
+     * it never starts, and both people watch "connecting" until they give up.
+     * Whether the event was lost came down to how fast setParameters resolved,
+     * which is why it varied by device.
+     */
+    pc.onnegotiationneeded = () => {
+      void this.onNegotiationNeeded();
+    };
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        this.callbacks.sendIceCandidate(event.candidate.toJSON() as RTCIceCandidateLike);
+      }
+    };
+    pc.ontrack = (event) => {
+      this.attachRemote(event.streams[0] ?? new MediaStream([event.track]));
+    };
+    pc.onconnectionstatechange = () => this.onConnectionStateChange();
+    pc.oniceconnectionstatechange = () => {
+      if (pc.iceConnectionState === 'failed') {
+        // A failed ICE agent will not recover on its own.
+        void this.restartIce();
+      }
+    };
+
     const track = this.pipeline.outboundTrack;
     const stream = this.pipeline.outboundStream;
     if (!track || !stream) {
@@ -156,26 +194,34 @@ export class CallSession {
       await sender.setParameters(params).catch(() => undefined);
     }
 
-    pc.onnegotiationneeded = () => {
-      void this.onNegotiationNeeded();
-    };
-    pc.onicecandidate = (event) => {
-      if (event.candidate) {
-        this.callbacks.sendIceCandidate(event.candidate.toJSON() as RTCIceCandidateLike);
-      }
-    };
-    pc.ontrack = (event) => {
-      this.attachRemote(event.streams[0] ?? new MediaStream([event.track]));
-    };
-    pc.onconnectionstatechange = () => this.onConnectionStateChange();
-    pc.oniceconnectionstatechange = () => {
-      if (pc.iceConnectionState === 'failed') {
-        // A failed ICE agent will not recover on its own.
-        void this.restartIce();
-      }
-    };
-
     this.startStatsSampling();
+
+    /*
+     * Confirm the offer actually happened, rather than assuming it did.
+     *
+     * negotiationneeded fires once per flag set, so anything that swallows it
+     * leaves the call with no failure path whatsoever — nothing throws, and ICE
+     * never fails because it never starts. That is too quiet a way to lose a
+     * call to leave to one event, even with the ordering above fixed.
+     *
+     * On a later task, so a queued negotiationneeded gets its turn first, and
+     * only while the connection is still untouched: stable signalling state, no
+     * offer in flight, none already sent. Those conditions cannot hold if
+     * negotiation did happen, so this can never produce a second offer.
+     */
+    if (!this.suppressNegotiation) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      if (
+        !this.closed &&
+        this.pc === pc &&
+        pc.signalingState === 'stable' &&
+        !this.makingOffer &&
+        !this.offerSent
+      ) {
+        console.warn('[call] negotiationneeded never fired; offering explicitly');
+        await this.onNegotiationNeeded();
+      }
+    }
   }
 
   /** The callee calls this once it has the caller's offer path open. */
@@ -192,6 +238,7 @@ export class CallSession {
       this.makingOffer = true;
       await pc.setLocalDescription();
       if (pc.localDescription) {
+        this.offerSent = true;
         this.callbacks.sendOffer(pc.localDescription.toJSON());
       }
     } catch (error) {
@@ -324,6 +371,7 @@ export class CallSession {
       pc.restartIce();
       await pc.setLocalDescription();
       if (pc.localDescription) {
+        this.offerSent = true;
         this.callbacks.sendOffer(pc.localDescription.toJSON());
       }
     } catch (error) {
