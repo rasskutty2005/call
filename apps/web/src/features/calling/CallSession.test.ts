@@ -68,7 +68,7 @@ class FakePeerConnection {
   async setLocalDescription() {
     // toJSON() included: the production code calls it, and a stub without it
     // throws into the catch and looks exactly like "no offer was sent".
-    const description = { type: 'offer', sdp: 'v=0' };
+    const description: RTCSessionDescriptionInit = { type: 'offer', sdp: 'v=0' };
     this.localDescription = { ...description, toJSON: () => description };
     this.signalingState = 'have-local-offer';
   }

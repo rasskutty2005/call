@@ -7,6 +7,12 @@ import type {
 import { CALL_STATS_INTERVAL_MS } from '@sonder/shared';
 import { AudioPipeline } from '@/voice/AudioPipeline';
 import { VoiceEngineError } from '@/voice/VoiceConverter';
+import {
+  isRoutingSupported,
+  releaseCallAudioRoute,
+  setCallAudioRoute,
+  type CallAudioRoute,
+} from './audioRoute';
 
 export type CallRole = 'caller' | 'callee';
 
@@ -55,6 +61,8 @@ export class CallSession {
   private makingOffer = false;
   /** Whether an offer has actually reached the wire. See the check in connect(). */
   private offerSent = false;
+  /** Earpiece by default: this is a phone call, not a video. */
+  private route: CallAudioRoute = 'earpiece';
   private ignoreOffer = false;
   private settingRemoteAnswerPending = false;
   /**
@@ -105,7 +113,26 @@ export class CallSession {
    * starts ringing, so a denied microphone never turns into a dropped call.
    */
   async prepareAudio(options: { deviceId?: string } = {}): Promise<void> {
+    // Before getUserMedia, not after: the OS decides where a call comes out
+    // when the audio session activates, and that is the moment capture starts.
+    // Claiming it afterwards means the first part of the call is on speaker.
+    setCallAudioRoute(this.route);
     await this.pipeline.start(options);
+  }
+
+  /** Whether this browser lets the page influence call routing at all. */
+  get isAudioRoutingSupported(): boolean {
+    return isRoutingSupported();
+  }
+
+  get audioRoute(): CallAudioRoute {
+    return this.route;
+  }
+
+  /** Returns whether the request reached the OS; it alone decides the output. */
+  setAudioRoute(route: CallAudioRoute): boolean {
+    this.route = route;
+    return setCallAudioRoute(route);
   }
 
   /**
@@ -504,6 +531,10 @@ export class CallSession {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+
+    // Give the audio session back, or every video on the site afterwards is
+    // still treated as a phone call and plays out of the earpiece.
+    releaseCallAudioRoute();
 
     if (this.statsTimer) {
       clearInterval(this.statsTimer);

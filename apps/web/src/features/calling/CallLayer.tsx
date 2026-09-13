@@ -3,6 +3,7 @@
 import * as React from 'react';
 import { toast } from 'sonner';
 import {
+  Ear,
   Mic,
   MicOff,
   Phone,
@@ -13,6 +14,7 @@ import {
   Wand2,
   X,
 } from 'lucide-react';
+import { isRoutingSupported, type CallAudioRoute } from './audioRoute';
 import type { CallState } from '@sonder/shared';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/feedback';
@@ -193,6 +195,15 @@ function ActiveCallScreen() {
   const [speakerOn, setSpeakerOn] = React.useState(true);
   const [ending, setEnding] = React.useState(false);
 
+  // Read after mount, never during render: it inspects a browser API that does
+  // not exist on the server, and a control that appears only after hydration is
+  // better than markup that disagrees with itself.
+  const [routingSupported, setRoutingSupported] = React.useState(false);
+  const [route, setRoute] = React.useState<CallAudioRoute>('earpiece');
+  React.useEffect(() => {
+    setRoutingSupported(isRoutingSupported());
+  }, []);
+
   if (!peer) return null;
 
   const connected = state === 'CONNECTED';
@@ -203,6 +214,12 @@ function ActiveCallScreen() {
     // Volume is the portable control; setSinkId is Chromium-only and is exposed
     // through the device picker instead.
     currentSession()?.setRemoteVolume(next ? 1 : 0);
+  };
+
+  const handleRoute = () => {
+    const next: CallAudioRoute = route === 'earpiece' ? 'speaker' : 'earpiece';
+    setRoute(next);
+    currentSession()?.setAudioRoute(next);
   };
 
   return (
@@ -291,7 +308,9 @@ function ActiveCallScreen() {
 
       {/* Controls */}
       <div className="px-6 pb-10 pb-safe">
-        <div className="mx-auto grid max-w-sm grid-cols-4 gap-3">
+        <div
+          className={`mx-auto grid max-w-sm gap-3 ${routingSupported ? 'grid-cols-5' : 'grid-cols-4'}`}
+        >
           <ControlButton
             active={!muted}
             onClick={toggleMute}
@@ -305,6 +324,14 @@ function ActiveCallScreen() {
             icon={speakerOn ? Volume2 : VolumeX}
             label={speakerOn ? 'Speaker' : 'Muted'}
           />
+          {routingSupported ? (
+            <ControlButton
+              active={route === 'speaker'}
+              onClick={handleRoute}
+              icon={route === 'speaker' ? Volume2 : Ear}
+              label={route === 'speaker' ? 'Speaker' : 'Earpiece'}
+            />
+          ) : null}
           <ControlButton
             active={voiceOn}
             onClick={() => setVoiceEnabled(!voiceOn)}
